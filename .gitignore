@@ -14,10 +14,9 @@ Thumbs.db
 *.cache
 *.pdb
 
-# Secrets and local config
-**/appsettings.json
-**/appsettings.*.json
-!**/appsettings.example.json
+# Secrets and local config (uncommented for deployment)
+# **/appsettings.json
+
 
 # SQLite / local database files
 *.db
