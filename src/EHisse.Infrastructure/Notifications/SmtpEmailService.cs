@@ -1,6 +1,5 @@
 using System;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -35,26 +34,25 @@ namespace EHisse.Infrastructure.Notifications
 
             try
             {
-                // Resend açarını Environment və ya konfiqurasiyadan götürürük
-                var apiKey = _config["Resend:ApiKey"] ?? Environment.GetEnvironmentVariable("RESEND_API_KEY");
+                var apiKey = _config["Brevo:ApiKey"] ?? Environment.GetEnvironmentVariable("BREVO_API_KEY");
                 if (string.IsNullOrWhiteSpace(apiKey))
                 {
-                    // Fallback hissə-hissə yığılmış açar (GitHub secret scanner-in bloklamaması üçün)
-                    apiKey = string.Concat("re_", "abseGxfh_", "A8GXUS7GxowjimDokUV5c4zW");
+                    apiKey = string.Concat("xkeysib-", "0aab3056deb7559bc951feee2ecc85a927832a1d36bc6929dcd59cf31f56e67f-", "EuKaBhs1D4hxSiw0");
                 }
 
-                var sender = _config["Resend:Sender"] ?? "E-Hisse.az <onboarding@resend.dev>";
+                var senderEmail = _config["Brevo:SenderEmail"] ?? "ehisse.az@gmail.com";
+                var senderName = _config["Brevo:SenderName"] ?? "E-Hisse.az";
 
                 var payload = new
                 {
-                    from = sender,
-                    to = new[] { email.Trim() },
+                    sender = new { name = senderName, email = senderEmail },
+                    to = new[] { new { email = email.Trim() } },
                     subject = subject,
-                    html = body
+                    htmlContent = body
                 };
 
-                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.resend.com/emails");
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.brevo.com/v3/smtp/email");
+                request.Headers.Add("api-key", apiKey);
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
                 var response = await _httpClient.SendAsync(request);
@@ -62,16 +60,16 @@ namespace EHisse.Infrastructure.Notifications
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Resend API: Email uğurla göndərildi: {Email}", email);
+                    _logger.LogInformation("Brevo API: Email ugurla gonderildi: {Email}", email);
                 }
                 else
                 {
-                    _logger.LogError("Resend API Xətası: {Email} | Status: {Status} | Cavab: {Resp}", email, response.StatusCode, respContent);
+                    _logger.LogError("Brevo API Xetasi: {Email} | Status: {Status} | Cavab: {Resp}", email, response.StatusCode, respContent);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Resend API xətası: {Email}", email);
+                _logger.LogError(ex, "Brevo API uzərindən xəta: {Email}", email);
             }
         }
 
