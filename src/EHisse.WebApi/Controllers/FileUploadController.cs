@@ -35,6 +35,14 @@ public class FileUploadController : ControllerBase
             return BadRequest(new { message = "Faylın həcmi 10 MB-dan çox ola bilməz." });
         }
 
+        // Kiber hücum qorunması: Yalnız təsdiqlənmiş təhlükəsiz şəkil formatlarına icazə verilir (.exe, .php, .sh qadağandır)
+        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (string.IsNullOrEmpty(extension) || !allowedExtensions.Contains(extension))
+        {
+            return BadRequest(new { message = "Yalnız JPG, JPEG, PNG və ya WEBP formatında şəkillər yükləyə bilərsiniz." });
+        }
+
         try
         {
             var fileUrl = await _storageService.UploadFileAsync(file, cancellationToken);

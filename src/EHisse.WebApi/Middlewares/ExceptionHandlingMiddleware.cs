@@ -8,10 +8,13 @@ public class ExceptionHandlingMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    private readonly IWebHostEnvironment _env;
+
+    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger, IWebHostEnvironment env)
     {
         _next = next;
         _logger = logger;
+        _env = env;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -22,12 +25,12 @@ public class ExceptionHandlingMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An unhandled exception occurred during request processing.");
-            await HandleExceptionAsync(context, ex);
+            _logger.LogError(ex, "Sistemdə gözlənilməz xəta baş verdi.");
+            await HandleExceptionAsync(context, ex, _env.IsDevelopment());
         }
     }
 
-    private static Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private static Task HandleExceptionAsync(HttpContext context, Exception exception, bool isDevelopment)
     {
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
@@ -35,8 +38,8 @@ public class ExceptionHandlingMiddleware
         var response = new
         {
             success = false,
-            message = "Serverdə daxili xəta baş verdi.",
-            details = exception.Message
+            message = "Serverdə daxili xəta baş verdi. Məlumatlar təhlükəsizlik səbəbilə qorunur.",
+            details = isDevelopment ? exception.Message : null
         };
 
         return context.Response.WriteAsync(JsonSerializer.Serialize(response));

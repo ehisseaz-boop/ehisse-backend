@@ -49,6 +49,7 @@ var app = builder.Build();
 
 // 3. HTTP Request Pipeline & Middlewares
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 
 if (!app.Environment.IsDevelopment())
 {

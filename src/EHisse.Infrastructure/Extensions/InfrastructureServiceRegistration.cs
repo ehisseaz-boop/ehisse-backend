@@ -33,7 +33,7 @@ public static class InfrastructureServiceRegistration
         });
 
         services.AddScoped<IStorageService, R2StorageService>();
-        services.AddScoped<INotificationService, LoggingNotificationService>();
+        services.AddScoped<INotificationService, SmtpEmailService>();
 
         return services;
     }
