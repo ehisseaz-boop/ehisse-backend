@@ -18,7 +18,8 @@ using System.Threading.Tasks;
 namespace EHisse.WebApi.Controllers
 {
     public record LoginRequest(string Username, string Password);
-    public record RegisterRequest(string FirstName, string LastName, string Phone, string? Email, string Password, UserRole Role);
+    public record RegisterRequest(string FirstName, string LastName, string Phone, string? Email, string Password, UserRole Role, string? Code);
+    public record SendRegisterOtpRequest(string Email);
     public record ForgotPasswordRequest(string Username);
     public record VerifyResetOtpRequest(string Username, string Code);
     public record ResetPasswordRequest(string Username, string Code, string NewPassword);
@@ -143,6 +144,52 @@ namespace EHisse.WebApi.Controllers
             });
         }
 
+        // POST api/Auth/SendRegisterOtp
+        [HttpPost("[action]")]
+        public async Task<IActionResult> SendRegisterOtp([FromBody] SendRegisterOtpRequest req)
+        {
+            var email = req.Email?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest(new { message = "E-poçt ünvanı mütləqdir." });
+
+            if (await _context.Users.AnyAsync(u => u.Email != null && u.Email.ToLower() == email.ToLower()))
+                return BadRequest(new { message = "Bu email ünvanı artıq qeydiyyatdan keçib." });
+
+            var random = new Random();
+            var code = random.Next(1000, 9999).ToString();
+            OtpStore.SetCode("REG_" + email, code, TimeSpan.FromMinutes(10));
+
+            var emailBody = $@"
+                <div style=""font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 25px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;"">
+                    <div style=""text-align: center; margin-bottom: 20px;"">
+                        <h2 style=""color: #2b3a4a; margin: 0;"">E-Hisse.az — Qeydiyyat Təsdiqi</h2>
+                    </div>
+                    <p style=""font-size: 15px; color: #333;"">Salam,</p>
+                    <p style=""font-size: 14px; color: #555; line-height: 1.6;"">
+                        E-Hisse platformasında qeydiyyatı tamamlamaq üçün təsdiq kodunuz:
+                    </p>
+                    <div style=""text-align: center; margin: 25px 0;"">
+                        <span style=""display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #27ae60; background: #f0fff4; padding: 12px 30px; border-radius: 8px; border: 1px dashed #27ae60;"">
+                            {code}
+                        </span>
+                    </div>
+                    <p style=""font-size: 13px; color: #777;"">Kod 10 dəqiqə ərzində etibarlıdır.</p>
+                    <hr style=""border: none; border-top: 1px solid #eee; margin: 20px 0;"" />
+                    <p style=""font-size: 12px; color: #aaa; text-align: center;"">© 2026 E-Hisse.az</p>
+                </div>";
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _notificationService.SendEmailAsync(email, $"{code} — E-Hisse Qeydiyyat Təsdiq Kodu", emailBody);
+                }
+                catch { }
+            });
+
+            return Ok(new { success = true, message = "Təsdiq kodu email ünvanınıza göndərildi!" });
+        }
+
         // POST api/Auth/Register
         [HttpPost("[action]")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest req)
@@ -165,6 +212,12 @@ namespace EHisse.WebApi.Controllers
 
             if (req.Role == UserRole.Admin)
                 return BadRequest(new { message = "Admin kimi qeydiyyatdan keÃ§mÉ™k mÃ¼mkÃ¼n deyil." });
+
+                        if (!string.IsNullOrWhiteSpace(email) && !string.IsNullOrWhiteSpace(req.Code))
+            {
+                if (!OtpStore.ValidateCode("REG_" + email, req.Code))
+                    return BadRequest(new { message = "Emailə göndərilən təsdiq kodu yanlışdır və ya vaxtı bitib." });
+            }
 
             string generatedUsername = normalizedTel;
 
@@ -374,4 +427,7 @@ namespace EHisse.WebApi.Controllers
         }
     }
 }
+
+
+
 
