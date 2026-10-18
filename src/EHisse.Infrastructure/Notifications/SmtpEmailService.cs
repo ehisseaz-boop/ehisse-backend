@@ -1,10 +1,11 @@
 using System;
-using System.Net;
-using System.Net.Mail;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using EHisse.Application.Interfaces;
+using MimeKit;
+using MailKit.Net.Smtp;
+using MailKit.Security;
 
 namespace EHisse.Infrastructure.Notifications
 {
@@ -21,7 +22,6 @@ namespace EHisse.Infrastructure.Notifications
 
         public Task SendSmsAsync(string? phone, string message)
         {
-            // SMS təminatçısı inteqrasiyası hələ aktiv deyilsə console-a qeyd edilir
             if (string.IsNullOrWhiteSpace(phone)) return Task.CompletedTask;
             _logger.LogInformation("[SMS -> {Phone}] {Message}", phone, message);
             return Task.CompletedTask;
@@ -36,33 +36,38 @@ namespace EHisse.Infrastructure.Notifications
                 var server = _config["SmtpSettings:Server"] ?? "smtp.gmail.com";
                 var portStr = _config["SmtpSettings:Port"] ?? "587";
                 int.TryParse(portStr, out int port);
+                if (port == 0) port = 587;
+
                 var senderEmail = _config["SmtpSettings:SenderEmail"] ?? "ehisse.az@gmail.com";
                 var senderName = _config["SmtpSettings:SenderName"] ?? "E-Hisse.az";
-                var password = _config["SmtpSettings:Password"]?.Replace(" ", "") ?? string.Empty;
-                var enableSsl = bool.Parse(_config["SmtpSettings:EnableSsl"] ?? "true");
+                var password = _config["SmtpSettings:Password"]?.Replace(" ", "") ?? "ksvzyqmnwcavdnts";
 
-                using var client = new SmtpClient(server, port)
+                var message = new MimeMessage();
+                message.From.Add(new MailboxAddress(senderName, senderEmail));
+                message.To.Add(MailboxAddress.Parse(email.Trim()));
+                message.Subject = subject;
+
+                var builder = new BodyBuilder
                 {
-                    Credentials = new NetworkCredential(senderEmail, password),
-                    EnableSsl = enableSsl
+                    HtmlBody = body
                 };
+                message.Body = builder.ToMessageBody();
 
-                using var mailMessage = new MailMessage
-                {
-                    From = new MailAddress(senderEmail, senderName),
-                    Subject = subject,
-                    Body = body,
-                    IsBodyHtml = true
-                };
+                using var client = new SmtpClient();
+                // Linux / Cloud hosting mühitlərində sertifikat xətalarını aşmaq üçün
+                client.ServerCertificateValidationCallback = (s, c, h, e) => true;
 
-                mailMessage.To.Add(email);
+                // Port 587 üçün StartTls ən etibarlı rejimdir
+                await client.ConnectAsync(server, port, SecureSocketOptions.StartTls);
+                await client.AuthenticateAsync(senderEmail, password);
+                await client.SendAsync(message);
+                await client.DisconnectAsync(true);
 
-                await client.SendMailAsync(mailMessage);
-                _logger.LogInformation("Email uğurla göndərildi: {Email} | Mövzu: {Subject}", email, subject);
+                _logger.LogInformation("MailKit: Email uğurla göndərildi: {Email} | Mövzu: {Subject}", email, subject);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Email göndərilərkən xəta baş verdi: {Email}", email);
+                _logger.LogError(ex, "MailKit: Email göndərilərkən xəta: {Email}", email);
             }
         }
 
