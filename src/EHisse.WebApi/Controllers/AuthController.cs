@@ -19,11 +19,14 @@ using System.Threading.Tasks;
 namespace EHisse.WebApi.Controllers
 {
     public record LoginRequest(string Username, string Password);
-    public record RegisterRequest(string FirstName, string LastName, string Phone, string? Email, string Password, UserRole Role, string? Code);
+    public record RegisterRequest(string FirstName, string LastName, string Phone, string? Email, string Password, UserRole Role, string? Code, string? Pin = null, string? IdCardImageUrl = null);
     public record SendRegisterOtpRequest(string Email);
     public record ForgotPasswordRequest(string Username);
     public record VerifyResetOtpRequest(string Username, string Code);
     public record ResetPasswordRequest(string Username, string Code, string NewPassword);
+    public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+    public record SendEmailOtpRequest(string NewEmail);
+    public record VerifyEmailOtpRequest(string NewEmail, string Code);
 
     [Route("api/[controller]")]
     [ApiController]
@@ -40,19 +43,35 @@ namespace EHisse.WebApi.Controllers
 
         // GET api/Auth/Me — cari istifadəçi (frontend header üçün)
         [HttpGet("[action]")]
-        public IActionResult Me()
+        public async Task<IActionResult> Me()
         {
             if (User.Identity?.IsAuthenticated != true)
                 return Ok(new { isAuthenticated = false });
 
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(userIdStr, out int userId) || userId <= 0)
+                return Ok(new { isAuthenticated = false });
+
+            var dbUser = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+            if (dbUser == null || dbUser.IsBlocked || (dbUser.Role != UserRole.Admin && dbUser.ApprovalStatus != ApprovalStatus.Approved))
+            {
+                // İstifadəçi təsdiq olunmayıbsa və ya bloklanıbsa sessiyanı sonlandırırıq
+                await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                return Ok(new { isAuthenticated = false });
+            }
+
+            var seller = await _context.SellerProfiles.AsNoTracking().FirstOrDefaultAsync(s => s.UserId == userId);
+
             return Ok(new
             {
                 isAuthenticated = true,
-                id = User.FindFirstValue(ClaimTypes.NameIdentifier),
-                username = User.FindFirstValue(ClaimTypes.Name),
-                fullName = User.FindFirstValue(ClaimTypes.GivenName),
-                role = User.FindFirstValue(ClaimTypes.Role),
-                email = User.FindFirstValue(ClaimTypes.Email)
+                id = userIdStr,
+                username = dbUser.Username,
+                fullName = $"{dbUser.FirstName} {dbUser.LastName}",
+                role = dbUser.Role.ToString(),
+                email = dbUser.Email,
+                companyName = seller?.CompanyName,
+                shopPhotoUrl = seller?.ShopPhotoUrl
             });
         }
 
@@ -203,6 +222,13 @@ namespace EHisse.WebApi.Controllers
                 string.IsNullOrWhiteSpace(req.Phone) || string.IsNullOrWhiteSpace(req.Password) || req.Password.Length < 6)
                 return BadRequest(new { message = "Ad, Soyad, Mobil nömrə və Şifrə məcburidir. Şifrə minimum 6 simvol olmalıdır." });
 
+            var pin = req.Pin?.Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(pin) || pin.Length != 7)
+                return BadRequest(new { message = "FİN kod mütləqdir və 7 simvoldan ibarət olmalıdır." });
+
+            if (string.IsNullOrWhiteSpace(req.IdCardImageUrl))
+                return BadRequest(new { message = "Şəxsiyyət vəsiqəsinin şəkli mütləq yüklənməlidir." });
+
             string? normalizedTel = null;
             if (!PhoneNumberHelper.TryNormalizeAzNumber(req.Phone, out string _, out string tel))
                 return BadRequest(new { message = "Mobil nömrə düzgün formatda deyil." });
@@ -210,7 +236,11 @@ namespace EHisse.WebApi.Controllers
 
             var email = req.Email?.Trim() ?? string.Empty;
             if (!string.IsNullOrEmpty(email) && await _context.Users.AnyAsync(u => u.Email != null && u.Email.ToLower() == email.ToLower()))
-                return BadRequest(new { message = "Bu email ünvanı artıq mövcuddur." });
+                return BadRequest(new { message = "Bu email ünvanı artıq qeydiyyatdan keçib." });
+
+            // FİN kod üzrə eynilik yoxlaması - eyni FİN ilə birdən çox istifadəçi qeydiyyatdan keçə bilməz
+            if (await _context.Users.AnyAsync(u => u.Pin != null && u.Pin.ToUpper() == pin))
+                return BadRequest(new { message = "Bu FİN kod artıq qeydiyyatdan keçib." });
 
             if (await _context.Users.AnyAsync(u => u.Phone == normalizedTel))
                 return BadRequest(new { message = "Bu nömrə artıq mövcuddur." });
@@ -232,17 +262,19 @@ namespace EHisse.WebApi.Controllers
                 LastName = req.LastName,
                 Phone = normalizedTel,
                 Email = email,
+                Pin = pin,
+                IdCardImageUrl = req.IdCardImageUrl,
                 Username = generatedUsername,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(req.Password),
                 Role = req.Role,
-                ApprovalStatus = ApprovalStatus.Approved,
+                ApprovalStatus = ApprovalStatus.Pending,
                 CreatedDate = DateTime.UtcNow
             };
 
             _context.Users.Add(newUser);
             await _context.SaveChangesAsync();
 
-            // Satıcı profilini birbaşa yaradırıq ki, elan yerləşdirə bilsin
+            // Satıcı profilini yaradırıq (təsdiqləndikdən sonra hazır olsun)
             if (!await _context.SellerProfiles.AnyAsync(s => s.UserId == newUser.Id))
             {
                 var sellerProfile = new SellerProfile
@@ -260,40 +292,27 @@ namespace EHisse.WebApi.Controllers
                 await _context.SaveChangesAsync();
             }
 
-            // Avtomatik daxil edirik (Auto-login)
-            var claims = new List<Claim>
-            {
-                new Claim(ClaimTypes.NameIdentifier, newUser.Id.ToString()),
-                new Claim(ClaimTypes.Name, newUser.Username),
-                new Claim(ClaimTypes.GivenName, $"{newUser.FirstName} {newUser.LastName}"),
-                new Claim(ClaimTypes.Role, newUser.Role.ToString()),
-                new Claim(ClaimTypes.Email, newUser.Email ?? string.Empty)
-            };
-
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme));
-            await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
-
-            // Qeydiyyat məlumatlarını və şifrəni istifadəçinin poçtuna göndəririk
+            // Qeydiyyat məlumatlarını və admin təsdiq bildirişini istifadəçinin poçtuna göndəririk
             if (!string.IsNullOrWhiteSpace(email))
             {
                 var roleName = req.Role == UserRole.Anbardar ? "Anbardar (Satıcı)" : "Usta (Alıcı)";
                 var emailBody = $@"
                     <div style=""font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;"">
                         <div style=""text-align: center; margin-bottom: 20px;"">
-                            <h2 style=""color: #2b3a4a; margin: 0;"">E-Hisse.az Platformasına Xoş Gəlmisiniz!</h2>
+                            <h2 style=""color: #2b3a4a; margin: 0;"">E-Hisse.az — Qeydiyyat Müraciətiniz Qəbul Edildi</h2>
                         </div>
                         <p style=""font-size: 15px; color: #333;"">Hörmətli <b>{req.FirstName} {req.LastName}</b>,</p>
                         <p style=""font-size: 14px; color: #555; line-height: 1.6;"">
-                            Qeydiyyatınız uğurla tamamlandı. Platformaya daxil oldunuz və dərhal elanlarınızı yerləşdirə bilərsiniz.
+                            Qeydiyyat müraciətiniz uğurla qeydə alındı. Təhlükəsizlik qaydalarına əsasən şəxsiyyət vəsiqəniz və məlumatlarınız admin tərəfindən yoxlanıldıqdan sonra hesabınız aktivləşdiriləcəkdir.
                         </p>
-                        <div style=""background-color: #f7f9fa; border-left: 4px solid #27ae60; padding: 15px; margin: 20px 0; border-radius: 4px;"">
-                            <h4 style=""margin: 0 0 10px 0; color: #333;"">Giriş Məlumatlarınız:</h4>
+                        <div style=""background-color: #f7f9fa; border-left: 4px solid #f39c12; padding: 15px; margin: 20px 0; border-radius: 4px;"">
+                            <h4 style=""margin: 0 0 10px 0; color: #333;"">Müraciət Məlumatlarınız:</h4>
                             <p style=""margin: 5px 0; font-size: 14px;""><b>İstifadəçi adı (Mobil nömrə):</b> {normalizedTel}</p>
                             <p style=""margin: 5px 0; font-size: 14px;""><b>E-poçt ünvanı:</b> {email}</p>
-                            <p style=""margin: 5px 0; font-size: 14px;""><b>Şifrəniz:</b> {req.Password}</p>
                             <p style=""margin: 5px 0; font-size: 14px;""><b>Rolunuz:</b> {roleName}</p>
+                            <p style=""margin: 5px 0; font-size: 14px;""><b>Status:</b> Yoxlamadadır (Admin təsdiqi gözlənilir)</p>
                         </div>
-                        <p style=""font-size: 13px; color: #888;"">Təhlükəsizliyiniz üçün şifrənizi heç kimlə paylaşmayın.</p>
+                        <p style=""font-size: 13px; color: #888;"">Admin təsdiqindən sonra sistemə daxil olub elanlarınızı yerləşdirə bilərsiniz.</p>
                         <hr style=""border: none; border-top: 1px solid #eee; margin: 20px 0;"" />
                         <p style=""font-size: 12px; color: #aaa; text-align: center;"">© 2026 E-Hisse.az. Bütün hüquqlar qorunur.</p>
                     </div>";
@@ -302,7 +321,7 @@ namespace EHisse.WebApi.Controllers
                 {
                     try
                     {
-                        await _notificationService.SendEmailAsync(email, "E-Hisse.az — Qeydiyyat və Giriş Məlumatları", emailBody);
+                        await _notificationService.SendEmailAsync(email, "E-Hisse.az — Qeydiyyat Sorğunuz Qəbul Edildi", emailBody);
                     }
                     catch { }
                 });
@@ -311,7 +330,8 @@ namespace EHisse.WebApi.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Qeydiyyatınız uğurla tamamlandı!",
+                isPending = true,
+                message = "Qeydiyyat müraciətiniz qəbul edildi. Admin təsdiqindən sonra hesabınız aktivləşəcək.",
                 id = newUser.Id,
                 username = newUser.Username,
                 fullName = $"{newUser.FirstName} {newUser.LastName}",
@@ -471,6 +491,118 @@ namespace EHisse.WebApi.Controllers
             }
 
             return Ok(new { success = true, message = "Şifrəniz uğurla yeniləndi!" });
+        }
+
+        // POST api/Auth/ChangePassword (şəxsi kabinetdən köhnə şifrə ilə yeniləmə)
+        [HttpPost("[action]")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest req)
+        {
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdStr) && Request.Headers.TryGetValue("X-User-Id", out var headerVal))
+                userIdStr = headerVal.ToString();
+
+            if (string.IsNullOrEmpty(userIdStr) || !int.TryParse(userIdStr, out int userId))
+                return Unauthorized(new { message = "Bu əməliyyat üçün daxil olmalısınız." });
+
+            if (string.IsNullOrWhiteSpace(req.CurrentPassword))
+                return BadRequest(new { message = "Cari şifrənizi daxil edin." });
+
+            if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 6)
+                return BadRequest(new { message = "Yeni şifrə minimum 6 simvoldan ibarət olmalıdır." });
+
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+                return NotFound(new { message = "İstifadəçi tapılmadı." });
+
+            bool isOldValid = false;
+            if (!user.PasswordHash.StartsWith("$2"))
+                isOldValid = (user.PasswordHash == req.CurrentPassword);
+            else
+                isOldValid = BCrypt.Net.BCrypt.Verify(req.CurrentPassword, user.PasswordHash);
+
+            if (!isOldValid)
+                return BadRequest(new { message = "Daxil edilmiş cari şifrə yanlışdır." });
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { success = true, message = "Şifrəniz uğurla dəyişdirildi!" });
+        }
+
+        // POST api/Auth/SendEmailOtp (yeni email üçün 4 rəqəmli OTP)
+        [HttpPost("[action]")]
+        public async Task<IActionResult> SendEmailOtp([FromBody] SendEmailOtpRequest req)
+        {
+            var email = req.NewEmail?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest(new { message = "Yeni e-poçt ünvanı mütləqdir." });
+
+            if (!email.Contains("@") || !email.Contains("."))
+                return BadRequest(new { message = "Düzgün e-poçt ünvanı daxil edin." });
+
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdStr) && Request.Headers.TryGetValue("X-User-Id", out var hVal))
+                userIdStr = hVal.ToString();
+
+            int.TryParse(userIdStr, out int currentUserId);
+
+            if (await _context.Users.AnyAsync(u => u.Id != currentUserId && u.Email != null && u.Email.ToLower() == email.ToLower()))
+                return BadRequest(new { message = "Bu e-poçt ünvanı artıq başqa istifadəçi tərəfindən istifadə olunur." });
+
+            var random = new Random();
+            var code = random.Next(1000, 9999).ToString();
+            OtpStore.SetCode("EMAIL_CHANGE_" + email.ToLower(), code, TimeSpan.FromMinutes(10));
+
+            var emailBody = $@"
+                <div style=""font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 25px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;"">
+                    <div style=""text-align: center; margin-bottom: 20px;"">
+                        <h2 style=""color: #2b3a4a; margin: 0;"">E-Hisse.az</h2>
+                        <p style=""color: #666; font-size: 14px; margin-top: 5px;"">E-poçt Yeniləmə Təsdiqi</p>
+                    </div>
+                    <p style=""font-size: 15px; color: #333;"">Salam,</p>
+                    <p style=""font-size: 14px; color: #555; line-height: 1.5;"">
+                        Kabinetinizdə e-poçt ünvanınızı bu ünvana dəyişmək üçün müraciət etdiniz. Təsdiq kodunuz:
+                    </p>
+                    <div style=""background-color: #f4f6f9; border-radius: 6px; padding: 15px; text-align: center; margin: 25px 0;"">
+                        <span style=""font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #00d26a;"">{code}</span>
+                    </div>
+                    <p style=""font-size: 13px; color: #777;"">Bu kod 10 dəqiqə ərzində etibarlıdır. Əgər siz müraciət etməmisinizsə, bu mesajı nəzərə almayın.</p>
+                </div>";
+
+            _ = Task.Run(async () =>
+            {
+                try { await _notificationService.SendEmailAsync(email, "E-Hisse.az — E-poçt Təsdiq Kodu", emailBody); }
+                catch { }
+            });
+
+            return Ok(new { success = true, message = "Təsdiq kodu qeyd etdiyiniz e-poçt ünvanına göndərildi." });
+        }
+
+        // POST api/Auth/VerifyEmailOtp (OTP təsdiqi və e-poçtun yenilənməsi)
+        [HttpPost("[action]")]
+        public async Task<IActionResult> VerifyEmailOtp([FromBody] VerifyEmailOtpRequest req)
+        {
+            var email = req.NewEmail?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(req.Code))
+                return BadRequest(new { message = "E-poçt və təsdiq kodu mütləqdir." });
+
+            if (!OtpStore.ValidateCode("EMAIL_CHANGE_" + email.ToLower(), req.Code.Trim()))
+                return BadRequest(new { message = "Təsdiq kodu yanlışdır və ya vaxtı bitib." });
+
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdStr) && Request.Headers.TryGetValue("X-User-Id", out var hVal))
+                userIdStr = hVal.ToString();
+
+            if (string.IsNullOrEmpty(userIdStr) || !int.TryParse(userIdStr, out int userId))
+                return Unauthorized(new { message = "Bu əməliyyat üçün daxil olmalısınız." });
+
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) return NotFound(new { message = "İstifadəçi tapılmadı." });
+
+            user.Email = email;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { success = true, email = user.Email, message = "E-poçt ünvanınız uğurla yeniləndi!" });
         }
     }
 }

@@ -25,7 +25,7 @@ namespace EHisse.WebApi.Controllers
 
     public record PriceInput(decimal NewPrice);
 
-    public record SettingsInput(string CompanyName, string ContactPerson, string? Phone, string? WhatsAppNumber, string? Address, bool ShowContactInfoInAds);
+    public record SettingsInput(string CompanyName, string ContactPerson, string? Phone, string? WhatsAppNumber, string? Address, bool ShowContactInfoInAds, double? Latitude = null, double? Longitude = null, string? ShopPhotoUrl = null);
 
     [Authorize(Roles = "Usta,Anbardar,Admin")]
     [Route("api/[controller]/[action]")]
@@ -43,7 +43,16 @@ namespace EHisse.WebApi.Controllers
             _blobService = blobService;
         }
 
-        private int CurrentUserId => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        private int CurrentUserId
+        {
+            get
+            {
+                var val = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(val) && Request.Headers.TryGetValue("X-User-Id", out var hVal))
+                    val = hVal.ToString();
+                return int.TryParse(val, out int id) ? id : 0;
+            }
+        }
 
         private async Task<SellerProfile?> GetSellerAsync()
         {
@@ -95,15 +104,37 @@ namespace EHisse.WebApi.Controllers
 
             return Ok(new
             {
-                seller = new { seller.Id, seller.CompanyName },
+                seller = new { 
+                    seller.Id, 
+                    seller.CompanyName,
+                    seller.Address,
+                    seller.Latitude,
+                    seller.Longitude,
+                    seller.ShopPhotoUrl
+                },
                 parts = parts.Select(p =>
                 {
                     var img = p.Images.FirstOrDefault(i => i.IsMain) ?? p.Images.FirstOrDefault();
                     var lastReview = p.Reviews.OrderByDescending(r => r.ReviewDate).FirstOrDefault();
+                    var rawPartType = p.PartType?.Name ?? "";
+                    var cleanPartType = rawPartType
+                        .Replace("Telefon üçün ekranlar", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün batareyalar", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün ekran", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün batareya", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün ", "", StringComparison.OrdinalIgnoreCase).Trim();
+
+                    var cleanTitle = (p.Title ?? "")
+                        .Replace("Telefon üçün ekranlar", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün batareyalar", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün ekran", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün batareya", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                        .Replace("Telefon üçün ", "", StringComparison.OrdinalIgnoreCase).Trim();
+
                     return new
                     {
                         id = p.Id,
-                        title = p.Title,
+                        title = cleanTitle,
                         sku = p.SKU,
                         price = p.Price,
                         discountPrice = p.DiscountPrice,
@@ -114,7 +145,7 @@ namespace EHisse.WebApi.Controllers
                         rejectionReason = p.RejectionReason ?? lastReview?.Reason,
                         brandName = p.DeviceModel?.Brand?.Name,
                         modelName = p.DeviceModel?.Name,
-                        partTypeName = p.PartType?.Name,
+                        partTypeName = cleanPartType,
                         qualityTypeName = p.QualityType?.Name,
                         createdDate = p.CreatedDate,
                         image = img == null ? null : (urlMap.TryGetValue(img.ImageUrl, out var u) ? u : img.ImageUrl)
@@ -159,11 +190,27 @@ namespace EHisse.WebApi.Controllers
             {
                 var model = await _context.DeviceModels.Include(m => m.Brand).FirstOrDefaultAsync(m => m.Id == input.DeviceModelId);
                 var partType = await _context.SparePartTypes.FirstOrDefaultAsync(pt => pt.Id == input.PartTypeId);
-                var gen = $"{model?.Brand?.Name} {model?.Name} {partType?.Name}".Trim();
+                var rawPartTypeName = partType?.Name ?? "";
+                var cleanPartTypeName = rawPartTypeName
+                    .Replace("Telefon üçün ekranlar", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün batareyalar", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün ekran", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün batareya", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün ", "", StringComparison.OrdinalIgnoreCase).Trim();
+
+                var gen = $"{model?.Brand?.Name} {model?.Name} {cleanPartTypeName}".Trim();
                 if (string.IsNullOrWhiteSpace(gen)) gen = "Ehtiyat Hissəsi";
                 return input with { Title = gen };
             }
-            return input;
+            return input with
+            {
+                Title = (input.Title ?? "")
+                    .Replace("Telefon üçün ekranlar", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün batareyalar", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün ekran", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün batareya", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Telefon üçün ", "", StringComparison.OrdinalIgnoreCase).Trim()
+            };
         }
 
         private static SparePart ToEntity(PartInput i) => new SparePart
@@ -436,12 +483,21 @@ namespace EHisse.WebApi.Controllers
             var s = user.SellerProfile;
             return Ok(new
             {
+                firstName = user.FirstName,
+                lastName = user.LastName,
+                fullName = $"{user.FirstName} {user.LastName}".Trim(),
+                pin = user.Pin,
+                idCardImageUrl = user.IdCardImageUrl,
+                email = user.Email,
                 companyName = s.CompanyName,
                 contactPerson = s.ContactPerson,
                 phone = s.Phone,
                 whatsAppNumber = s.WhatsAppNumber,
                 address = s.Address,
-                showContactInfoInAds = s.ShowContactInfoInAds,
+                latitude = s.Latitude,
+                longitude = s.Longitude,
+                shopPhotoUrl = s.ShopPhotoUrl,
+                showContactInfoInAds = true,
                 rating = s.Rating
             });
         }
@@ -457,7 +513,10 @@ namespace EHisse.WebApi.Controllers
                 Phone = input.Phone,
                 WhatsAppNumber = input.WhatsAppNumber,
                 Address = input.Address,
-                ShowContactInfoInAds = input.ShowContactInfoInAds
+                Latitude = input.Latitude,
+                Longitude = input.Longitude,
+                ShopPhotoUrl = input.ShopPhotoUrl,
+                ShowContactInfoInAds = true
             };
 
             var result = await _warehouseService.UpdateSettingsAsync(CurrentUserId, updated);

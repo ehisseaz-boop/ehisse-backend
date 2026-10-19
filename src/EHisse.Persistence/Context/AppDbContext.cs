@@ -120,8 +120,8 @@ namespace EHisse.Persistence.Context
 
             // 5. Part Types
             modelBuilder.Entity<SparePartType>().HasData(
-                new SparePartType { Id = 1, Name = "Telefon üçün ekranlar", Key = "SCREEN", IsPortable = false, IsAccessory = false },
-                new SparePartType { Id = 2, Name = "Telefon üçün batareyalar", Key = "BATTERY", IsPortable = false, IsAccessory = false },
+                new SparePartType { Id = 1, Name = "Ekranlar", Key = "SCREEN", IsPortable = false, IsAccessory = false },
+                new SparePartType { Id = 2, Name = "Batareyalar", Key = "BATTERY", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 3, Name = "Kameralar", Key = "CAM_REAR", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 4, Name = "Kamera şüşələri", Key = "CAM_FRONT", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 5, Name = "Motherboard", Key = "MB", IsPortable = false, IsAccessory = false },
@@ -135,7 +135,7 @@ namespace EHisse.Persistence.Context
                 new SparePartType { Id = 13, Name = "Ram", Key = "RAM", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 14, Name = "Storage", Key = "STORAGE", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 15, Name = "Adapter", Key = "ADAPTER", IsPortable = false, IsAccessory = true },
-                new SparePartType { Id = 16, Name = "Telefon üçün sensorlar və ekran şüşələri", Key = "SENSOR_GLASS", IsPortable = false, IsAccessory = false },
+                new SparePartType { Id = 16, Name = "Sensor və ekran şüşələri", Key = "SENSOR_GLASS", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 17, Name = "Antenlər", Key = "ANTENNA", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 18, Name = "Dinamik setkaları", Key = "SPEAKER_NET", IsPortable = false, IsAccessory = false },
                 new SparePartType { Id = 19, Name = "Korpus hissələri", Key = "BODY_PARTS", IsPortable = false, IsAccessory = false },
@@ -195,7 +195,7 @@ namespace EHisse.Persistence.Context
                 new User { Id = 1, Username = "elcin", Email = "elcin@example.com", PasswordHash = "123", Role = UserRole.Usta, FirstName = "Elçin", LastName = "Məmmədov", Phone = "+994501234567", ApprovalStatus = ApprovalStatus.Approved },
                 new User { Id = 2, Username = "rashad", Email = "rashad@example.com", PasswordHash = "123", Role = UserRole.Anbardar, FirstName = "Rəşad", LastName = "Əliyev", Phone = "+994551234568", ApprovalStatus = ApprovalStatus.Approved },
                 new User { Id = 3, Username = "nigar", Email = "nigar@example.com", PasswordHash = "123", Role = UserRole.Usta, FirstName = "Nigar", LastName = "Həsənova", Phone = "+994701234569", ApprovalStatus = ApprovalStatus.Approved },
-                new User { Id = 4, Username = "admin", Email = "admin@example.com", PasswordHash = "admin", Role = UserRole.Admin, FirstName = "Baş", LastName = "Administrator", Phone = "+994000000000", ApprovalStatus = ApprovalStatus.Approved },
+                new User { Id = 4, Username = "admin_user", Email = "admin@example.com", PasswordHash = "admin_panel2026#", Role = UserRole.Admin, FirstName = "Baş", LastName = "Administrator", Phone = "+994000000000", ApprovalStatus = ApprovalStatus.Approved },
                 new User { Id = 5, Username = "samir", Email = "samir@example.com", PasswordHash = "123", Role = UserRole.Usta, FirstName = "Samir", LastName = "Quliyev", Phone = "+994501231122", ApprovalStatus = ApprovalStatus.Approved },
                 new User { Id = 6, Username = "vuqar", Email = "vuqar@example.com", PasswordHash = "123", Role = UserRole.Anbardar, FirstName = "Vuqar", LastName = "Hesenov", Phone = "+994551233344", ApprovalStatus = ApprovalStatus.Approved },
                 new User { Id = 7, Username = "leyla", Email = "leyla@example.com", PasswordHash = "123", Role = UserRole.Usta, FirstName = "Leyla", LastName = "Memmedova", Phone = "+994701235566", ApprovalStatus = ApprovalStatus.Approved },

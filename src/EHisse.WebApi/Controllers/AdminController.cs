@@ -7,6 +7,7 @@ using EHisse.Persistence.Repositories;
 using EHisse.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -44,6 +45,8 @@ namespace EHisse.WebApi.Controllers
             fullName = $"{u.FirstName} {u.LastName}".Trim(),
             email = u.Email,
             phone = u.Phone,
+            pin = u.Pin,
+            idCardImageUrl = u.IdCardImageUrl,
             role = u.Role.ToString(),
             approvalStatus = u.ApprovalStatus.ToString(),
             rejectionReason = u.RejectionReason,
@@ -138,6 +141,13 @@ namespace EHisse.WebApi.Controllers
                 ? Ok(new { success = true, message = "İstifadəçi blokdan çıxarıldı." }) 
                 : NotFound(new { message = "İstifadəçi tapılmadı." });
 
+        [HttpPost("{userId:int}")]
+        [HttpDelete("{userId:int}")]
+        public async Task<IActionResult> DeleteUser(int userId)
+            => await _adminService.DeleteUserAsync(userId, AdminId) 
+                ? Ok(new { success = true, message = "İstifadəçi sistemdən tamamilə silindi." }) 
+                : BadRequest(new { message = "İstifadəçi silinə bilmədi və ya admin hesabıdır." });
+
         // GET api/Admin/PendingAds
         [HttpGet]
         public async Task<IActionResult> PendingAds()
@@ -173,6 +183,15 @@ namespace EHisse.WebApi.Controllers
         [HttpGet]
         public async Task<IActionResult> AllUsers()
             => Ok((await _adminService.GetAllUsersAsync()).Select(MapUser));
+
+        [HttpGet("{id:int}")]
+        [ActionName("UserDetails")]
+        public async Task<IActionResult> UserDetails(int id)
+        {
+            var u = await _adminService.GetUserByIdAsync(id);
+            if (u == null) return NotFound(new { message = "İstifadəçi tapılmadı." });
+            return Ok(MapUser(u));
+        }
 
         [HttpGet]
         public async Task<IActionResult> AllAds()
@@ -398,5 +417,33 @@ namespace EHisse.WebApi.Controllers
                 newStock = s.NewStock,
                 timestamp = s.Timestamp
             }));
+
+        public record AdminCredentialsInput(string? NewUsername, string? NewPassword);
+
+        [HttpPost]
+        public async Task<IActionResult> ChangeCredentials([FromBody] AdminCredentialsInput input, [FromServices] AppDbContext context)
+        {
+            var admin = await context.Users.FindAsync(AdminId);
+            if (admin == null || admin.Role != UserRole.Admin)
+                return Unauthorized();
+
+            if (!string.IsNullOrWhiteSpace(input.NewUsername))
+            {
+                var trimmed = input.NewUsername.Trim();
+                if (await context.Users.AnyAsync(u => u.Id != admin.Id && u.Username.ToLower() == trimmed.ToLower()))
+                    return BadRequest(new { message = "Bu istifadəçi adı artıq başqa istifadəçi tərəfindən istifadə olunur." });
+                admin.Username = trimmed;
+            }
+
+            if (!string.IsNullOrWhiteSpace(input.NewPassword))
+            {
+                if (input.NewPassword.Length < 6)
+                    return BadRequest(new { message = "Şifrə minimum 6 simvol olmalıdır." });
+                admin.PasswordHash = BCrypt.Net.BCrypt.HashPassword(input.NewPassword);
+            }
+
+            await context.SaveChangesAsync();
+            return Ok(new { success = true, message = "Admin istifadəçi adı və şifrəsi uğurla yeniləndi!", username = admin.Username });
+        }
     }
 }

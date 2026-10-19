@@ -21,6 +21,63 @@ public static class DatabaseSeeder
             context.Database.EnsureCreated();
         }
 
+        // Add Pin and IdCardImageUrl columns to Users table if they do not exist
+        try
+        {
+            context.Database.ExecuteSqlRaw(@"
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Users' AND column_name='Pin') THEN
+                        ALTER TABLE ""Users"" ADD COLUMN ""Pin"" text NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Users' AND column_name='IdCardImageUrl') THEN
+                        ALTER TABLE ""Users"" ADD COLUMN ""IdCardImageUrl"" text NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='SellerProfiles' AND column_name='ShopPhotoUrl') THEN
+                        ALTER TABLE ""SellerProfiles"" ADD COLUMN ""ShopPhotoUrl"" text NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='SellerProfiles' AND column_name='Latitude') THEN
+                        ALTER TABLE ""SellerProfiles"" ADD COLUMN ""Latitude"" double precision NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='SellerProfiles' AND column_name='Longitude') THEN
+                        ALTER TABLE ""SellerProfiles"" ADD COLUMN ""Longitude"" double precision NULL;
+                    END IF;
+                END $$;
+            ");
+        }
+        catch { }
+
+        // Ensure Admin user credentials match updated configuration
+        try
+        {
+            var adminUser = context.Users.FirstOrDefault(u => u.Role == UserRole.Admin || u.Username == "admin" || u.Username == "admin_user");
+            if (adminUser != null)
+            {
+                adminUser.Username = "admin_user";
+                adminUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin_panel2026#");
+                adminUser.ApprovalStatus = ApprovalStatus.Approved;
+                adminUser.IsBlocked = false;
+                context.SaveChanges();
+            }
+            else
+            {
+                context.Users.Add(new User
+                {
+                    Username = "admin_user",
+                    Email = "admin@example.com",
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin_panel2026#"),
+                    Role = UserRole.Admin,
+                    FirstName = "Baş",
+                    LastName = "Administrator",
+                    Phone = "+994000000000",
+                    ApprovalStatus = ApprovalStatus.Approved,
+                    IsBlocked = false
+                });
+                context.SaveChanges();
+            }
+        }
+        catch { }
+
         // Fix any null SKUs in legacy data
         var nullSkus = context.SpareParts.Where(s => s.SKU == null || s.SKU == "").ToList();
         if (nullSkus.Any())
@@ -53,6 +110,44 @@ public static class DatabaseSeeder
             }
         }
         context.SaveChanges();
+
+        // Fix part type names: ensure 'Ekranlar' and 'Batareyalar'
+        var partTypesToFix = context.SparePartTypes.ToList();
+        foreach (var pt in partTypesToFix)
+        {
+            if (pt.Name.Contains("ekran", StringComparison.OrdinalIgnoreCase) && !pt.Name.Contains("şüşə", StringComparison.OrdinalIgnoreCase) && !pt.Name.Contains("suse", StringComparison.OrdinalIgnoreCase))
+            {
+                pt.Name = "Ekranlar";
+            }
+            else if (pt.Name.Contains("batarey", StringComparison.OrdinalIgnoreCase))
+            {
+                pt.Name = "Batareyalar";
+            }
+            else if (pt.Name.Contains("Telefon üçün sensorlar və ekran şüşələri", StringComparison.OrdinalIgnoreCase))
+            {
+                pt.Name = "Sensor və ekran şüşələri";
+            }
+        }
+        context.SaveChanges();
+
+        // Also clean up any legacy ad titles containing "telefon üçün"
+        try
+        {
+            context.Database.ExecuteSqlRaw(@"
+                UPDATE ""SpareParts""
+                SET ""Title"" = REPLACE(REPLACE(REPLACE(""Title"", 'Telefon üçün ekranlar', 'Ekranlar'), 'Telefon üçün batareyalar', 'Batareyalar'), 'Telefon üçün ', '')
+                WHERE ""Title"" ILIKE '%telefon üçün%';
+
+                UPDATE ""SparePartTypes""
+                SET ""Name"" = 'Ekranlar'
+                WHERE ""Key"" = 'SCREEN' OR ""Name"" ILIKE '%telefon üçün ekran%';
+
+                UPDATE ""SparePartTypes""
+                SET ""Name"" = 'Batareyalar'
+                WHERE ""Key"" = 'BATTERY' OR ""Name"" ILIKE '%telefon üçün batarey%';
+            ");
+        }
+        catch { }
 
         // Seeding default categories if needed
         if (context.Categories.Count() < 10)

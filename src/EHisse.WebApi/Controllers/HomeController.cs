@@ -239,6 +239,9 @@ namespace EHisse.WebApi.Controllers
                     phone = s.ShowContactInfoInAds ? s.Phone : null,
                     whatsAppNumber = s.ShowContactInfoInAds ? s.WhatsAppNumber : null,
                     address = s.Address,
+                    latitude = s.Latitude,
+                    longitude = s.Longitude,
+                    shopPhotoUrl = s.ShopPhotoUrl,
                     rating = s.Rating,
                     isPhoneVerified = s.IsPhoneVerified,
                     totalAds = adStats.TryGetValue(s.Id, out var st) ? st.Total : 0,
@@ -355,23 +358,48 @@ namespace EHisse.WebApi.Controllers
                     phone = seller.ShowContactInfoInAds ? seller.Phone : null,
                     whatsAppNumber = seller.ShowContactInfoInAds ? seller.WhatsAppNumber : null,
                     address = seller.Address,
+                    latitude = seller.Latitude,
+                    longitude = seller.Longitude,
+                    shopPhotoUrl = seller.ShopPhotoUrl,
                     rating = seller.Rating
                 },
                 isOwner
             });
         }
 
+        private static string CleanPartTypeName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "";
+            return name
+                .Replace("Telefon üçün ekranlar", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün batareyalar", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün ekran", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün batareya", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        }
+
+        private static string CleanTitle(string? title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return "";
+            return title
+                .Replace("Telefon üçün ekranlar", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün batareyalar", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün ekran", "Ekranlar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün batareya", "Batareyalar", StringComparison.OrdinalIgnoreCase)
+                .Replace("Telefon üçün ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        }
+
         private static object MapPart(SparePart p, IDictionary<string, string> urlMap) => new
         {
             id = p.Id,
-            title = p.Title,
+            title = CleanTitle(p.Title),
             price = p.Price,
             stockQuantity = p.StockQuantity,
             viewCount = p.ViewCount,
             createdDate = p.CreatedDate,
             brandName = p.DeviceModel?.Brand?.Name,
             modelName = p.DeviceModel?.Name,
-            partTypeName = p.PartType?.Name,
+            partTypeName = CleanPartTypeName(p.PartType?.Name),
             qualityTypeName = p.QualityType?.Name,
             sellerId = p.SellerId,
             sellerName = p.Seller?.CompanyName ?? p.Seller?.ContactPerson,

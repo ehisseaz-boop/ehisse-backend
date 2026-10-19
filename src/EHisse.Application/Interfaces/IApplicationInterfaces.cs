@@ -61,11 +61,13 @@ public interface IAdminService
     Task<bool> RejectUserAsync(int userId, string reason, int adminId);
     Task<bool> BlockUserAsync(int userId, string reason, int adminId);
     Task<bool> UnblockUserAsync(int userId, int adminId);
+    Task<bool> DeleteUserAsync(int userId, int adminId);
     Task<bool> ApproveAdAsync(int adId, int adminId);
     Task<bool> RejectAdAsync(int adId, string reason, int adminId);
     Task<(bool Success, string ErrorMessage)> RestoreAdAsync(int adId, int adminId);
     Task<bool> DeactivateAdAsync(int adId, int adminId, string reason);
     Task<List<User>> GetAllUsersAsync();
+    Task<User?> GetUserByIdAsync(int id);
     Task<List<SparePart>> GetAllAdsAsync();
 
     // Kataloq - Kateqoriyalar
