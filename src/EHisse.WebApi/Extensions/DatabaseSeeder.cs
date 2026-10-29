@@ -1548,6 +1548,23 @@ public static class DatabaseSeeder
                         SELECT ""Id"" FROM ""Users"" WHERE ""Email"" LIKE '%@example.com'
                     );
                     DELETE FROM ""Users"" WHERE ""Email"" LIKE '%@example.com' AND ""Username"" <> 'admin_user' AND ""Role"" <> 1;
+
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM ""Users"" WHERE ""Phone"" = '+994555521501') THEN
+                            INSERT INTO ""Users"" (""Id"", ""FirstName"", ""LastName"", ""Phone"", ""Email"", ""Pin"", ""IdCardImageUrl"", ""Username"", ""PasswordHash"", ""Role"", ""ApprovalStatus"", ""IsBlocked"", ""CreatedDate"")
+                            OVERRIDING SYSTEM VALUE
+                            VALUES (10, 'lamia', 'safguluyeva', '+994555521501', 'safguluyevalamiya15@gmail.com', '7VNQPSH', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', '+994555521501', '123456', 2, 2, false, '2026-10-29 17:01:00+00');
+                        END IF;
+                    END $$;
+
+                    INSERT INTO ""SellerProfiles"" (""UserId"", ""CompanyName"", ""ContactPerson"", ""Phone"", ""WhatsAppNumber"", ""Rating"", ""ShowContactInfoInAds"", ""IsPhoneVerified"")
+                    SELECT u.""Id"", 'lamia safguluyeva (Usta)', 'lamia safguluyeva', '+994555521501', '+994555521501', 5.0, true, true
+                    FROM ""Users"" u
+                    WHERE u.""Phone"" = '+994555521501'
+                      AND NOT EXISTS (SELECT 1 FROM ""SellerProfiles"" s WHERE s.""UserId"" = u.""Id"");
+
+                    DELETE FROM ""ActivityLogs"" WHERE ""Details"" LIKE '%@example.com%' OR ""Details"" LIKE '%elcin%' OR ""Details"" LIKE '%nigar%' OR ""Details"" LIKE '%samir%' OR ""Details"" LIKE '%leyla%' OR ""Details"" LIKE '%rustam%' OR ""Action"" = 'DeleteUser';
                 ");
             }
             catch { }
