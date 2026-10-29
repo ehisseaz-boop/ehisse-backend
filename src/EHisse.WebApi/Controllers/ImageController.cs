@@ -49,6 +49,24 @@ namespace EHisse.WebApi.Controllers
             // Brauzer və CDN kəşləməsi (şəkillərin hər dəfə təkrar yüklənməməsi və dərhal açılması üçün)
             Response.Headers.Append("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
 
+            // Əgər DataURI göndərilibsə, birbaşa baytlara çevirib qaytarırıq
+            if (path.StartsWith("data:", System.StringComparison.OrdinalIgnoreCase))
+            {
+                var commaIndex = path.IndexOf(',');
+                if (commaIndex > 0)
+                {
+                    var header = path.Substring(5, commaIndex - 5);
+                    var mime = header.Split(';')[0];
+                    if (string.IsNullOrWhiteSpace(mime)) mime = "image/jpeg";
+                    try
+                    {
+                        var bytes = System.Convert.FromBase64String(path.Substring(commaIndex + 1));
+                        return File(bytes, mime);
+                    }
+                    catch { }
+                }
+            }
+
             // Əgər fayl wwwroot daxilində fiziki olaraq varsa (legacy şəkillər və ya uploads/...)
             var cleanPath = path.TrimStart('/').Replace('\\', '/');
             if (!cleanPath.Contains(".."))
@@ -107,12 +125,13 @@ namespace EHisse.WebApi.Controllers
         {
             // Məhsulun bu istifadəçiyə aid olduğunu yoxla
             var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var isAdmin = User.IsInRole("Admin");
             var sellerProfile = await _context.SellerProfiles.FirstOrDefaultAsync(s => s.UserId == userId);
-            if (sellerProfile == null && !User.IsInRole("Admin")) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
+            if (sellerProfile == null && !isAdmin) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
 
             var part = await _context.SpareParts
                 .Include(p => p.Images)
-                .FirstOrDefaultAsync(p => p.Id == sparePartId && !p.IsDeleted && (User.IsInRole("Admin") || (sellerProfile != null && p.SellerId == sellerProfile.Id)));
+                .FirstOrDefaultAsync(p => p.Id == sparePartId && (isAdmin || (sellerProfile != null && p.SellerId == sellerProfile.Id)) && !p.IsDeleted);
 
             if (part == null) return NotFound(new { message = "Elan tapılmadı." });
 
@@ -179,12 +198,13 @@ namespace EHisse.WebApi.Controllers
         public async Task<IActionResult> Delete(int imageId)
         {
             var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var isAdmin = User.IsInRole("Admin");
             var sellerProfile = await _context.SellerProfiles.FirstOrDefaultAsync(s => s.UserId == userId);
-            if (sellerProfile == null && !User.IsInRole("Admin")) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
+            if (sellerProfile == null && !isAdmin) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
 
             var image = await _context.SparePartImages
                 .Include(i => i.SparePart)
-                .FirstOrDefaultAsync(i => i.Id == imageId && (User.IsInRole("Admin") || (sellerProfile != null && i.SparePart.SellerId == sellerProfile.Id)));
+                .FirstOrDefaultAsync(i => i.Id == imageId && (isAdmin || (sellerProfile != null && i.SparePart.SellerId == sellerProfile.Id)));
 
             if (image == null) return NotFound(new { message = "Şəkil tapılmadı." });
 

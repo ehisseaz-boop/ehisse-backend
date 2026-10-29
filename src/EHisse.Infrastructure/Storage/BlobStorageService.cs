@@ -116,13 +116,29 @@ namespace EHisse.Infrastructure.Storage
             var targetDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", cleanFolder.Replace('/', Path.DirectorySeparatorChar));
             EnsureDirectory(targetDir);
 
-            var filePath = Path.Combine(targetDir, fileName);
-            await using (var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            // Render kimi bulud konteynerlərində yerli disk ephemeral (müvəqqəti) olduğu üçün,
+            // yüklənən şəkilləri həm yerli diskə, həm də DB-də itməməsi üçün birbaşa DataURI formatında qaytarırıq.
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+
+            try
             {
-                await file.CopyToAsync(fileStream);
+                var filePath = Path.Combine(targetDir, fileName);
+                await File.WriteAllBytesAsync(filePath, bytes);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Yerli diskə fayl yazılarkən xəbərdarlıq (DataURI istifadə olunacaq): {FileName}", fileName);
             }
 
-            return $"uploads/{cleanFolder}/{fileName}";
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            var mime = GetContentType(ext);
+            if (mime == "application/octet-stream" && !string.IsNullOrWhiteSpace(file.ContentType))
+                mime = file.ContentType;
+
+            var base64 = Convert.ToBase64String(bytes);
+            return $"data:{mime};base64,{base64}";
         }
 
         /// <inheritdoc/>
@@ -130,6 +146,11 @@ namespace EHisse.Infrastructure.Storage
         {
             if (string.IsNullOrEmpty(blobPath))
                 return "/images/no-image.png";
+
+            if (blobPath.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                blobPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                blobPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                return blobPath;
 
             if (IsLegacyPath(blobPath))
                 return blobPath.StartsWith("/") ? blobPath : $"/{blobPath}";
@@ -151,7 +172,13 @@ namespace EHisse.Infrastructure.Storage
                 if (string.IsNullOrEmpty(path) || result.ContainsKey(path))
                     continue;
 
-                if (IsLegacyPath(path) || _useLocalStorage || path.StartsWith("uploads/") || path.StartsWith("/uploads/"))
+                if (path.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    result[path] = path;
+                }
+                else if (IsLegacyPath(path) || _useLocalStorage || path.StartsWith("uploads/") || path.StartsWith("/uploads/"))
                 {
                     result[path] = path.StartsWith("/") ? path : $"/{path}";
                 }
@@ -167,7 +194,7 @@ namespace EHisse.Infrastructure.Storage
         /// <inheritdoc/>
         public async Task DeleteAsync(string blobPath)
         {
-            if (string.IsNullOrEmpty(blobPath))
+            if (string.IsNullOrEmpty(blobPath) || blobPath.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                 return;
 
             if (blobPath.StartsWith("uploads/") || blobPath.StartsWith("/uploads/"))
