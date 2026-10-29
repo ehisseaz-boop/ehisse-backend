@@ -62,7 +62,9 @@ namespace EHisse.WebApi.Controllers
                 .ToDictionaryAsync(k => k.CategoryId, v => v.Count);
 
             var totalParts = await activeAdsQuery.CountAsync();
-            var totalSellers = await _context.SellerProfiles.CountAsync();
+            var totalSellers = await _context.SellerProfiles
+                .Include(s => s.User)
+                .CountAsync(s => s.User != null && s.User.Role != UserRole.Admin && !s.User.IsBlocked && s.User.ApprovalStatus == ApprovalStatus.Approved);
 
             // ── QueryBuilder ilə dynamic search ────────────────────────────────
             var filter = new SparePartSearchQuery
@@ -127,7 +129,7 @@ namespace EHisse.WebApi.Controllers
         {
             var query = _context.SellerProfiles
                 .Include(s => s.User)
-                .Where(s => !s.User.IsBlocked && s.User.ApprovalStatus == ApprovalStatus.Approved);
+                .Where(s => s.User != null && s.User.Role != UserRole.Admin && !s.User.IsBlocked && s.User.ApprovalStatus == ApprovalStatus.Approved);
 
             // Növ / Rol üzrə filtr (usta, anbardar, servis)
             if (!string.IsNullOrWhiteSpace(role) && !role.Equals("all", StringComparison.OrdinalIgnoreCase))

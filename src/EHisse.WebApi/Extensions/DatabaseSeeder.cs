@@ -1545,9 +1545,9 @@ public static class DatabaseSeeder
                         SELECT s.""Id"" FROM ""SellerProfiles"" s JOIN ""Users"" u ON s.""UserId"" = u.""Id"" WHERE u.""Email"" LIKE '%@example.com'
                     );
                     DELETE FROM ""SellerProfiles"" WHERE ""UserId"" IN (
-                        SELECT ""Id"" FROM ""Users"" WHERE ""Email"" LIKE '%@example.com' AND ""Username"" <> 'admin_user'
+                        SELECT ""Id"" FROM ""Users"" WHERE ""Email"" LIKE '%@example.com'
                     );
-                    DELETE FROM ""Users"" WHERE ""Email"" LIKE '%@example.com' AND ""Username"" <> 'admin_user' AND ""Role"" <> 2;
+                    DELETE FROM ""Users"" WHERE ""Email"" LIKE '%@example.com' AND ""Username"" <> 'admin_user' AND ""Role"" <> 1;
                 ");
             }
             catch { }
