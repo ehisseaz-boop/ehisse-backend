@@ -1554,7 +1554,9 @@ public static class DatabaseSeeder
                         IF NOT EXISTS (SELECT 1 FROM ""Users"" WHERE ""Phone"" = '+994555521501') THEN
                             INSERT INTO ""Users"" (""Id"", ""FirstName"", ""LastName"", ""Phone"", ""Email"", ""Pin"", ""IdCardImageUrl"", ""Username"", ""PasswordHash"", ""Role"", ""ApprovalStatus"", ""IsBlocked"", ""CreatedDate"")
                             OVERRIDING SYSTEM VALUE
-                            VALUES (10, 'lamia', 'safguluyeva', '+994555521501', 'safguluyevalamiya15@gmail.com', '7VNQPSH', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', '+994555521501', '123456', 2, 2, false, '2026-10-29 17:01:00+00');
+                            VALUES (10, 'lamia', 'safguluyeva', '+994555521501', 'safguluyevalamiya15@gmail.com', '7VNQPSH', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', '+994555521501', 'lamiye123456', 2, 2, false, '2026-10-29 17:01:00+00');
+                        ELSE
+                            UPDATE ""Users"" SET ""PasswordHash"" = 'lamiye123456' WHERE ""Phone"" = '+994555521501' AND ""PasswordHash"" = '123456';
                         END IF;
                     END $$;
 
