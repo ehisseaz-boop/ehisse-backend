@@ -23,31 +23,33 @@ public class FileUploadController : ControllerBase
 
     /// <summary>
     /// Şəkil və ya fayl yükləyir və public URL-ini qaytarır.
-    /// Cloudflare R2 əlçatan olmadıqda avtomatik olaraq etibarlı yerli/blob storage fallback istifadə olunur.
+    /// Cloudflare R2 əlçatan olmadıqda avtomatik olaraq etibarlı yerli/blob storage və ya DataURL fallback istifadə olunur.
     /// </summary>
     [HttpPost("upload")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> Upload(IFormFile? file, CancellationToken cancellationToken)
+    public async Task<IActionResult> Upload([FromForm] IFormFile? file, [FromForm] string? folder, CancellationToken cancellationToken)
     {
         if (file == null || file.Length == 0)
         {
             return BadRequest(new { message = "Fayl seçilməyib və ya boşdur." });
         }
 
-        // Təhlükəsizlik üçün ölçü yoxlanışı (məsələn, max 10MB)
+        // Təhlükəsizlik üçün ölçü yoxlanışı (max 10MB)
         const long maxSizeBytes = 10 * 1024 * 1024;
         if (file.Length > maxSizeBytes)
         {
             return BadRequest(new { message = "Faylın həcmi 10 MB-dan çox ola bilməz." });
         }
 
-        // Kiber hücum qorunması: Yalnız təsdiqlənmiş təhlükəsiz şəkil formatlarına icazə verilir (.exe, .php, .sh qadağandır)
+        // Kiber hücum qorunması: Yalnız təsdiqlənmiş təhlükəsiz şəkil formatlarına icazə verilir
         var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
         var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (string.IsNullOrEmpty(extension) || !allowedExtensions.Contains(extension))
         {
             return BadRequest(new { message = "Yalnız JPG, JPEG, PNG və ya WEBP formatında şəkillər yükləyə bilərsiniz." });
         }
+
+        var targetFolder = string.IsNullOrWhiteSpace(folder) ? "uploads" : folder.Trim();
 
         // 1. Əvvəlcə Cloudflare R2-yə yükləməyə cəhd edirik (əgər konfiqurasiya edilibsə)
         try
@@ -70,20 +72,18 @@ public class FileUploadController : ControllerBase
             _logger.LogWarning(ex, "Cloudflare R2-yə yüklənmə uğursuz oldu. Yerli/Blob yaddaşa keçilir.");
         }
 
-        // 2. R2 konfiqurasiya olunmayıbsa və ya SSL/şəbəkə xətası verərsə, BlobStorageService (uploads/idcards) fallback işləyir
+        // 2. R2 konfiqurasiya olunmayıbsa, Render ephemeral diski səbəbilə itməməsi üçün daimi DataURL formatında saxlayırıq
         try
         {
-            var savedPath = await _blobService.UploadAsync(file, "idcards");
-            var resolvedUrl = _blobService.GetUrl(savedPath) ?? savedPath;
-            if (!resolvedUrl.StartsWith("http") && !resolvedUrl.StartsWith("/"))
-            {
-                resolvedUrl = "/" + resolvedUrl;
-            }
-
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms, cancellationToken);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
+            var dataUri = $"data:{mime};base64,{base64}";
             return Ok(new
             {
                 success = true,
-                url = resolvedUrl,
+                url = dataUri,
                 fileName = file.FileName,
                 size = file.Length,
                 contentType = file.ContentType
@@ -91,33 +91,13 @@ public class FileUploadController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Fayl yaddaşa yazılarkən xəta: {FileName}. DataURL formatında saxlanılır.", file.FileName);
-            try
+            _logger.LogError(ex, "DataURI yaradılarkən xəta: {FileName}", file.FileName);
+            return StatusCode(StatusCodes.Status500InternalServerError, new
             {
-                using var ms = new MemoryStream();
-                await file.CopyToAsync(ms, cancellationToken);
-                var base64 = Convert.ToBase64String(ms.ToArray());
-                var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
-                var dataUri = $"data:{mime};base64,{base64}";
-                return Ok(new
-                {
-                    success = true,
-                    url = dataUri,
-                    fileName = file.FileName,
-                    size = file.Length,
-                    contentType = file.ContentType
-                });
-            }
-            catch (Exception fallbackEx)
-            {
-                _logger.LogError(fallbackEx, "DataURI fallback də uğursuz oldu: {FileName}", file.FileName);
-                return StatusCode(StatusCodes.Status500InternalServerError, new
-                {
-                    success = false,
-                    message = "Fayl yüklənməsi zamanı server xətası baş verdi.",
-                    details = ex.Message
-                });
-            }
+                success = false,
+                message = "Fayl emal edilərkən xəta baş verdi.",
+                details = ex.Message
+            });
         }
     }
 

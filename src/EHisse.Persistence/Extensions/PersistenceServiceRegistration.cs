@@ -1,3 +1,4 @@
+using System;
 using EHisse.Application.Interfaces;
 using EHisse.Persistence.Context;
 using EHisse.Persistence.Repositories;
@@ -13,7 +14,26 @@ public static class PersistenceServiceRegistration
     {
         services.AddDbContext<AppDbContext>(options =>
         {
-            options.UseNpgsql(configuration.GetConnectionString("DefaultConnection"));
+            var connStr = configuration.GetConnectionString("DefaultConnection") 
+                ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection") 
+                ?? Environment.GetEnvironmentVariable("DATABASE_URL") 
+                ?? "Host=aws-0-eu-west-1.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.xtlimzohxsvcnuclzbxt;Password=EHisseler2026!Secured#Db;SSL Mode=Require;Trust Server Certificate=true";
+
+            var isPreprod = (configuration["PreprodMode"] ?? Environment.GetEnvironmentVariable("PREPROD_MODE") ?? "false")
+                .Equals("true", StringComparison.OrdinalIgnoreCase);
+
+            if (isPreprod && !connStr.Contains("Search Path=", StringComparison.OrdinalIgnoreCase))
+            {
+                connStr = connStr.TrimEnd(';') + ";Search Path=preprod";
+            }
+
+            options.UseNpgsql(connStr, npgsqlOptions =>
+            {
+                if (isPreprod)
+                {
+                    npgsqlOptions.MigrationsHistoryTable("__EFMigrationsHistory", "preprod");
+                }
+            });
             options.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
         });
 

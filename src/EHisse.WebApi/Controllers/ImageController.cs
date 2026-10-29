@@ -65,29 +65,54 @@ namespace EHisse.WebApi.Controllers
                 var defaultPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "images", "default.png");
                 if (System.IO.File.Exists(defaultPath))
                     return PhysicalFile(defaultPath, "image/png");
-                return NotFound();
+
+                // Şəkil tapılmadıqda konsolu 404 ilə doldurmamaq üçün standart fallback SVG qaytarırıq
+                var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"200\" viewBox=\"0 0 200 200\"><rect width=\"100%\" height=\"100%\" fill=\"#1e293b\"/><text x=\"50%\" y=\"50%\" dominant-baseline=\"middle\" text-anchor=\"middle\" fill=\"#94a3b8\" font-family=\"sans-serif\" font-size=\"14\">Şəkil yoxdur</text></svg>";
+                return Content(svg, "image/svg+xml");
             }
 
             return Redirect(url);
         }
+
+        [HttpGet("/uploads/{**slug}")]
+        public IActionResult GetUpload(string? slug)
+        {
+            if (string.IsNullOrEmpty(slug)) return NotFound();
+
+            Response.Headers.Append("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+
+            var cleanPath = slug.TrimStart('/').Replace('\\', '/');
+            if (!cleanPath.Contains(".."))
+            {
+                var wwwrootPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", cleanPath.Replace('/', Path.DirectorySeparatorChar));
+                if (System.IO.File.Exists(wwwrootPath))
+                {
+                    return PhysicalFile(wwwrootPath, GetMimeType(wwwrootPath));
+                }
+            }
+
+            var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"200\" viewBox=\"0 0 200 200\"><rect width=\"100%\" height=\"100%\" fill=\"#1e293b\"/><text x=\"50%\" y=\"50%\" dominant-baseline=\"middle\" text-anchor=\"middle\" fill=\"#94a3b8\" font-family=\"sans-serif\" font-size=\"14\">Mağaza Şəkli</text></svg>";
+            return Content(svg, "image/svg+xml");
+        }
+
 
         // ─────────────────────────────────────────────────────────────
         //  Şəkil yükləmə — Blob Storage-a (və ya yerli diskə) yükləyir, DB-a path yazır
         //  POST api/Image/Upload  (multipart/form-data: sparePartId, file, isMain)
         // ─────────────────────────────────────────────────────────────
         [HttpPost]
-        [Authorize(Roles = "Usta,Anbardar")]
+        [Authorize(Roles = "Usta,Anbardar,Admin")]
         [RequestSizeLimit(MaxFileSizeMb * 1024 * 1024 + 64 * 1024)]
         public async Task<IActionResult> Upload([FromForm] int sparePartId, IFormFile? file, [FromForm] bool isMain = false)
         {
             // Məhsulun bu istifadəçiyə aid olduğunu yoxla
             var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var sellerProfile = await _context.SellerProfiles.FirstOrDefaultAsync(s => s.UserId == userId);
-            if (sellerProfile == null) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
+            if (sellerProfile == null && !User.IsInRole("Admin")) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
 
             var part = await _context.SpareParts
                 .Include(p => p.Images)
-                .FirstOrDefaultAsync(p => p.Id == sparePartId && p.SellerId == sellerProfile.Id && !p.IsDeleted);
+                .FirstOrDefaultAsync(p => p.Id == sparePartId && !p.IsDeleted && (User.IsInRole("Admin") || (sellerProfile != null && p.SellerId == sellerProfile.Id)));
 
             if (part == null) return NotFound(new { message = "Elan tapılmadı." });
 
@@ -150,16 +175,16 @@ namespace EHisse.WebApi.Controllers
         //  DELETE api/Image/Delete/5
         // ─────────────────────────────────────────────────────────────
         [HttpDelete("{imageId:int}")]
-        [Authorize(Roles = "Usta,Anbardar")]
+        [Authorize(Roles = "Usta,Anbardar,Admin")]
         public async Task<IActionResult> Delete(int imageId)
         {
             var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var sellerProfile = await _context.SellerProfiles.FirstOrDefaultAsync(s => s.UserId == userId);
-            if (sellerProfile == null) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
+            if (sellerProfile == null && !User.IsInRole("Admin")) return StatusCode(403, new { message = "Satıcı profili tapılmadı." });
 
             var image = await _context.SparePartImages
                 .Include(i => i.SparePart)
-                .FirstOrDefaultAsync(i => i.Id == imageId && i.SparePart.SellerId == sellerProfile.Id);
+                .FirstOrDefaultAsync(i => i.Id == imageId && (User.IsInRole("Admin") || (sellerProfile != null && i.SparePart.SellerId == sellerProfile.Id)));
 
             if (image == null) return NotFound(new { message = "Şəkil tapılmadı." });
 

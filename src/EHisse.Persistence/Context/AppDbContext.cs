@@ -26,6 +26,8 @@ namespace EHisse.Persistence.Context
         public DbSet<SparePartReview> SparePartReviews { get; set; }
         public DbSet<ApprovalHistory> ApprovalHistories { get; set; }
         public DbSet<ActivityLog> ActivityLogs { get; set; }
+        public DbSet<SellerReview> SellerReviews { get; set; }
+        public DbSet<SiteSetting> SiteSettings { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

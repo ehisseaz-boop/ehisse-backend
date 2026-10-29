@@ -106,7 +106,7 @@ namespace EHisse.WebApi.Controllers
             {
                 seller = new { 
                     seller.Id, 
-                    seller.CompanyName,
+                    CompanyName = seller.CompanyName?.Replace("(Anbardar)", "(Satıcı)").Replace("Anbardar", "Satıcı"),
                     seller.Address,
                     seller.Latitude,
                     seller.Longitude,
@@ -239,6 +239,22 @@ namespace EHisse.WebApi.Controllers
             var seller = await GetSellerAsync();
             if (seller == null) return NoSeller();
 
+            // Ünvan məcburiyyətini yoxla: satıcının profilində ünvan olmalıdır
+            if (string.IsNullOrWhiteSpace(seller.Address) && string.IsNullOrWhiteSpace(input.LocationAddress))
+            {
+                return BadRequest(new { message = "Ünvan qeyd olunmayıb. Zəhmət olmasa əvvəlcə profil tənzimləmələrindən mağaza/anbar ünvanınızı daxil edin." });
+            }
+
+            // Elana satıcının profilindəki ünvan və xəritə koordinatlarını avtomatik mənimsət
+            if (string.IsNullOrWhiteSpace(input.LocationAddress))
+            {
+                input = input with { 
+                    LocationAddress = seller.Address,
+                    Latitude = input.Latitude ?? seller.Latitude,
+                    Longitude = input.Longitude ?? seller.Longitude
+                };
+            }
+
             input = await EnsureTitleAsync(input);
 
             var errors = await ValidateAsync(input, seller.Id, null);
@@ -300,6 +316,16 @@ namespace EHisse.WebApi.Controllers
         {
             var seller = await GetSellerAsync();
             if (seller == null) return NoSeller();
+
+            // Ünvan və koordinat boşdursa profil ünvanını avtomatik tətbiq et
+            if (string.IsNullOrWhiteSpace(input.LocationAddress) && !string.IsNullOrWhiteSpace(seller.Address))
+            {
+                input = input with { 
+                    LocationAddress = seller.Address,
+                    Latitude = input.Latitude ?? seller.Latitude,
+                    Longitude = input.Longitude ?? seller.Longitude
+                };
+            }
 
             var part = await _warehouseService.GetPartAsync(id, seller.Id);
             if (part == null) return NotFound(new { message = "Elan tapılmadı." });
@@ -419,8 +445,8 @@ namespace EHisse.WebApi.Controllers
             if (part == null) return NotFound(new { message = "Silinmiş elan tapılmadı." });
 
             part.IsDeleted = false;
-            part.IsActive = true;
-            part.LastModifiedDate = DateTime.Now;
+            part.IsActive = part.ModerationStatus == ApprovalStatus.Approved && part.StockQuantity > 0;
+            part.LastModifiedDate = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
             return Ok(new { success = true, message = "Elan uğurla bərpa edildi." });
@@ -451,9 +477,10 @@ namespace EHisse.WebApi.Controllers
             var seller = await GetSellerAsync();
             if (seller == null) return NoSeller();
 
+            var userId = CurrentUserId;
             var sales = await _context.SparePartSaleAudits
                 .Include(s => s.SparePart)
-                .Where(s => s.SellerId == seller.Id)
+                .Where(s => s.SellerId == seller.Id || s.SellerId == userId)
                 .OrderByDescending(s => s.Timestamp)
                 .Take(200)
                 .Select(s => new
@@ -489,7 +516,7 @@ namespace EHisse.WebApi.Controllers
                 pin = user.Pin,
                 idCardImageUrl = user.IdCardImageUrl,
                 email = user.Email,
-                companyName = s.CompanyName,
+                companyName = s.CompanyName?.Replace("(Anbardar)", "(Satıcı)").Replace("Anbardar", "Satıcı"),
                 contactPerson = s.ContactPerson,
                 phone = s.Phone,
                 whatsAppNumber = s.WhatsAppNumber,
@@ -506,6 +533,10 @@ namespace EHisse.WebApi.Controllers
         [HttpPut]
         public async Task<IActionResult> Settings([FromBody] SettingsInput input)
         {
+            if (string.IsNullOrWhiteSpace(input.Address))
+            {
+                return BadRequest(new { message = "Mağaza / anbar ünvanı məcburidir. Zəhmət olmasa ünvanı qeyd edin." });
+            }
             var updated = new SellerProfile
             {
                 CompanyName = input.CompanyName,
@@ -524,6 +555,89 @@ namespace EHisse.WebApi.Controllers
             if (!result.Success) return BadRequest(new { message = result.ErrorMessage });
 
             return Ok(new { success = true, message = "Tənzimləmələr uğurla yadda saxlanıldı." });
+        }
+
+        // POST api/Warehouse/BulkImportParts
+        [HttpPost]
+        public async Task<IActionResult> BulkImportParts([FromBody] List<PartInput> items)
+        {
+            var seller = await GetSellerAsync();
+            if (seller == null) return NoSeller();
+            if (items == null || !items.Any()) return BadRequest(new { message = "Yükləmək üçün heç bir məhsul tapılmadı." });
+
+            int addedCount = 0;
+            int updatedCount = 0;
+            var errors = new List<string>();
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                var rowNum = i + 2; // Excel başlıq sətrini nəzərə alaraq
+                var item = items[i];
+                try
+                {
+                    item = await EnsureTitleAsync(item);
+
+                    // Əgər SKU qeyd olunubsa və bu satıcının həmin SKU ilə mövcud elanı varsa, qiymət və stokunu YENİLƏYİRİK
+                    if (!string.IsNullOrWhiteSpace(item.SKU))
+                    {
+                        var existingPart = await _context.SpareParts.FirstOrDefaultAsync(p => p.SellerId == seller.Id && p.SKU == item.SKU && !p.IsDeleted);
+                        if (existingPart != null)
+                        {
+                            existingPart.Price = item.Price > 0 ? item.Price : existingPart.Price;
+                            existingPart.StockQuantity = item.StockQuantity >= 0 ? item.StockQuantity : existingPart.StockQuantity;
+                            if (existingPart.StockQuantity <= 0)
+                            {
+                                existingPart.IsActive = false;
+                            }
+                            if (item.WarrantyMonths > 0) existingPart.WarrantyMonths = item.WarrantyMonths;
+                            if (!string.IsNullOrWhiteSpace(item.Description)) existingPart.Description = item.Description;
+                            existingPart.LastModifiedDate = DateTime.UtcNow;
+                            updatedCount++;
+                            continue;
+                        }
+                    }
+
+                    var rowErrors = await ValidateAsync(item, seller.Id, null);
+                    if (rowErrors.Any())
+                    {
+                        errors.Add($"Sətir {rowNum} ({item.Title}): {string.Join(", ", rowErrors)}");
+                        continue;
+                    }
+
+                    var entity = ToEntity(item);
+                    if (string.IsNullOrEmpty(entity.SKU))
+                    {
+                        entity.SKU = $"SKU-{Guid.NewGuid().ToString().Substring(0, 8).ToUpper()}";
+                    }
+                    entity.SellerId = seller.Id;
+                    entity.LocationAddress = string.IsNullOrWhiteSpace(entity.LocationAddress) ? seller.Address : entity.LocationAddress;
+                    entity.Latitude = entity.Latitude ?? seller.Latitude;
+                    entity.Longitude = entity.Longitude ?? seller.Longitude;
+                    entity.CreatedDate = DateTime.UtcNow;
+                    entity.LastModifiedDate = DateTime.UtcNow;
+                    entity.ModerationStatus = ApprovalStatus.Approved;
+                    entity.IsActive = entity.StockQuantity > 0;
+
+                    _context.SpareParts.Add(entity);
+                    addedCount++;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Sətir {rowNum}: {ex.Message}");
+                }
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                addedCount,
+                updatedCount,
+                totalProcessed = items.Count,
+                errors,
+                message = $"{addedCount} yeni elan əlavə edildi, {updatedCount} elanın qiymət və stoku yeniləndi." + (errors.Any() ? $" ({errors.Count} sətirdə xəta oldu)" : "")
+            });
         }
     }
 }
